@@ -14,7 +14,7 @@ pub inline fn interfaceCast(comptime I: type, data: anytype) I {
     interface.data = @ptrCast(data);
     inline for (funcs) |f| {
         const func_name = comptime funcName(f.name);
-        @field(interface.vtable, f.name) = &@field(T, &func_name);
+        @field(interface.vtable, f.name) = @ptrCast(&@field(T, &func_name));
     }
     return interface;
 }
@@ -40,14 +40,24 @@ inline fn validateTableFunctions(comptime I: type, comptime T: type) void {
     const fields = @typeInfo(@FieldType(I, "vtable")).@"struct".fields;
     for (fields) |field| {
         if (@typeInfo(field.type) != .pointer or @typeInfo(@typeInfo(field.type).pointer.child) != .@"fn") @compileError("'" ++ field.name ++ "' field of vtable must be a pointer to a function");
-        const field_info = @typeInfo(@typeInfo(field.type).pointer.child).@"fn";
-        if (field_info.params.len == 0) @compileError("'" ++ field.name ++ "' field of vtable must have at least one parameter");
-        if (field_info.params[0].type != *anyopaque) @compileError("First parameter of '" ++ field.name ++ "' field of vtable must be of type '*anyopaque'");
 
         const func_name = comptime funcName(field.name);
-        if (!@hasDecl(T, &func_name)) @compileError(@TypeOf(T) ++ " does not have a declaration for '" ++ field.name ++ "'");
-        if (@TypeOf(&@field(T, &func_name)) != field.type) {
-            @compileError("Signature of function '" ++ &func_name ++ "' in " ++ @typeName(T) ++ " does not match type in vtable: expected " ++ @typeName(field.type) ++ ", found " ++ @typeName(@TypeOf(@field(T, &func_name))));
+        if (!@hasDecl(T, &func_name)) @compileError(@typeName(T) ++ " does not have a declaration for '" ++ field.name ++ "'");
+
+        const interface_fn_info = @typeInfo(@typeInfo(field.type).pointer.child).@"fn";
+        const data_fn_info = @typeInfo(@TypeOf(@field(T, &func_name))).@"fn";
+        if (interface_fn_info.params.len == 0) @compileError("'" ++ field.name ++ "' field of vtable must have at least one parameter");
+        if (interface_fn_info.params.len != data_fn_info.params.len) @compileError("Function '" ++ &func_name ++ "' in " ++ @typeName(T) ++ " has a different number of parameters than the vtable function: expected " ++ data_fn_info.params.len ++ ", found " ++ interface_fn_info.params.len);
+
+        for (interface_fn_info.params, data_fn_info.params, 0..) |interface_param, data_param, i| {
+            if (i == 0) {
+                if (interface_param.type != *anyopaque) @compileError("First parameter of '" ++ field.name ++ "' field of vtable must be of type '*anyopaque', found " ++ @typeName(interface_param.type));
+                if (data_param.type != *T and data_param.type != *const T) @compileError("First parameter of function '" ++ &func_name ++ "' in " ++ @typeName(T) ++ " must be of type '*" ++ @typeName(T) ++ "', found " ++ @typeName(data_param.type.?));
+                continue;
+            }
+            if (interface_param.type != data_param.type) {
+                @compileError("Parameter type mismatch in function '" ++ &func_name ++ "': expected " ++ @typeName(data_param.type.?) ++ ", found " ++ @typeName(interface_param.type.?));
+            }
         }
     }
 }
@@ -97,25 +107,40 @@ test "interface" {
         data: *anyopaque,
         vtable: struct {
             health: *const fn (self: *anyopaque) u32,
+            move: *const fn (self: *anyopaque, x: f32, y: f32) void,
         },
 
         pub fn health(self: @This()) u32 {
             return self.vtable.health(self.data);
         }
+
+        pub fn move(self: @This(), x: f32, y: f32) void {
+            self.vtable.move(self.data, x, y);
+        }
     };
 
     const Player = struct {
         current_health: u32,
+        x: f32,
+        y: f32,
 
-        pub fn health(self: *anyopaque) u32 {
-            const player: *@This() = @alignCast(@ptrCast(self));
-            return player.current_health;
+        pub fn health(self: *const @This()) u32 {
+            return self.current_health;
+        }
+
+        pub fn move(self: *@This(), x: f32, y: f32) void {
+            self.x += x;
+            self.y += y;
         }
     };
 
-    var player = Player{ .current_health = 100 };
+    var player = Player{ .current_health = 100, .x = 0, .y = 0 };
     const entity = interfaceCast(Entity, &player);
 
     try testing.expectEqual(Entity, @TypeOf(entity));
     try testing.expectEqual(entity.health(), 100);
+
+    entity.move(5, 10);
+    try testing.expectEqual(player.x, 5);
+    try testing.expectEqual(player.y, 10);
 }
