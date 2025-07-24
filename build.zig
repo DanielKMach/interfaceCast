@@ -1,14 +1,12 @@
 const std = @import("std");
 
-// Although this function looks imperative, note that its job is to
-// declaratively construct a build graph that will be executed by an external
-// runner.
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const install = b.getInstallStep();
     const test_lib = b.step("test", "Run unit tests");
+    const run = b.step("run", "Run example");
 
     const module = b.addModule("interfaceCast", .{
         .root_source_file = b.path("src/root.zig"),
@@ -21,10 +19,23 @@ pub fn build(b: *std.Build) void {
         .name = "interfaceCast",
         .root_module = module,
     });
-    install.dependOn(&lib.step);
+    const install_lib = b.addInstallArtifact(lib, .{});
+    install.dependOn(&install_lib.step);
 
     const tests = b.addTest(.{
         .root_module = module,
     });
     test_lib.dependOn(&tests.step);
+
+    const example = b.addExecutable(.{
+        .name = "example",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/example.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    example.root_module.addImport("interfaceCast", module);
+    const run_example = b.addRunArtifact(example);
+    run.dependOn(&run_example.step);
 }

@@ -1,64 +1,101 @@
 const std = @import("std");
 const testing = std.testing;
 
-pub inline fn interfaceCast(comptime I: type, data: anytype) I {
-    if (@typeInfo(I) != .@"struct") @compileError(@typeName(I) ++ " is not a struct type");
-    const T = DataType(data);
-    comptime validateDataField(I);
-    comptime validateVTableField(I);
-    comptime validateTableFunctions(I, T);
+pub inline fn interfaceCast(comptime I: type, ctx: anytype) I {
+    if (@typeInfo(I) != .@"struct") @compileError(@typeName(I) ++ " must be a struct, found '" ++ @tagName(@typeInfo(I)) ++ "'");
+    const T = comptime ContextType(@TypeOf(ctx));
+    const VTable = comptime VTableType(I);
+    const ctx_field = comptime checkContextField(I);
+    comptime validateTableFunctions(VTable, T);
 
-    const funcs = @typeInfo(@FieldType(I, "vtable")).@"struct".fields;
     var interface: I = undefined;
 
-    interface.data = @ptrCast(data);
-    inline for (funcs) |f| {
-        const func_name = comptime funcName(f.name);
-        @field(interface.vtable, f.name) = @ptrCast(&@field(T, &func_name));
-    }
+    @field(interface, ctx_field) = @ptrCast(ctx);
+    @field(interface, "vtable") = &(comptime blk: {
+        var table: VTable = undefined;
+        for (@typeInfo(VTable).@"struct".fields) |f| {
+            @field(table, f.name) = @ptrCast(&@field(T, &funcName(f.name)));
+        }
+        break :blk table;
+    });
     return interface;
 }
 
-inline fn DataType(data: anytype) type {
-    if (@typeInfo(@TypeOf(data)) != .pointer) @compileError("data must be a pointer type");
-    const T = @typeInfo(@TypeOf(data)).pointer.child;
-    if (@typeInfo(T) != .@"struct") @compileError("data must be a pointer to a struct");
-    return T;
+inline fn ContextType(T: type) type {
+    const info = @typeInfo(T);
+    if (info != .pointer or info.pointer.is_const or info.pointer.size != .one or @typeInfo(info.pointer.child) != .@"struct") {
+        @compileError("data must be a mutable pointer to one struct element, found '" ++ @typeName(T) ++ "'");
+    }
+    return info.pointer.child;
 }
 
-inline fn validateDataField(comptime I: type) void {
-    if (!@hasField(I, "data")) @compileError(@typeName(I) ++ " does not have a 'data' field");
-    if (@FieldType(I, "data") != *anyopaque) @compileError("'data' field of " ++ @typeName(I) ++ " must be of type '*anyopaque'");
+inline fn VTableType(comptime I: type) type {
+    if (!@hasField(I, "vtable")) {
+        @compileError(@typeName(I) ++ " must have a 'vtable' field");
+    }
+    const FieldType = @FieldType(I, "vtable");
+    const info = @typeInfo(FieldType);
+    if (info != .pointer or !info.pointer.is_const or info.pointer.size != .one or @typeInfo(info.pointer.child) != .@"struct") {
+        @compileError("'vtable' field must be a const pointer to one struct element, found '" ++ @typeName(FieldType) ++ "'");
+    }
+    return info.pointer.child;
 }
 
-inline fn validateVTableField(comptime I: type) void {
-    if (!@hasField(I, "vtable")) @compileError(@typeName(I) ++ " does not have a 'vtable' field");
-    if (@typeInfo(@FieldType(I, "vtable")) != .@"struct") @compileError("'vtable' field of " ++ @typeName(I) ++ " must be a struct");
-}
-
-inline fn validateTableFunctions(comptime I: type, comptime T: type) void {
-    const fields = @typeInfo(@FieldType(I, "vtable")).@"struct".fields;
-    for (fields) |field| {
-        if (@typeInfo(field.type) != .pointer or @typeInfo(@typeInfo(field.type).pointer.child) != .@"fn") @compileError("'" ++ field.name ++ "' field of vtable must be a pointer to a function");
-
-        const func_name = comptime funcName(field.name);
-        if (!@hasDecl(T, &func_name)) @compileError(@typeName(T) ++ " does not have a declaration for '" ++ field.name ++ "'");
-
-        const interface_fn_info = @typeInfo(@typeInfo(field.type).pointer.child).@"fn";
-        const data_fn_info = @typeInfo(@TypeOf(@field(T, &func_name))).@"fn";
-        if (interface_fn_info.params.len == 0) @compileError("'" ++ field.name ++ "' field of vtable must have at least one parameter");
-        if (interface_fn_info.params.len != data_fn_info.params.len) @compileError("Function '" ++ &func_name ++ "' in " ++ @typeName(T) ++ " has a different number of parameters than the vtable function: expected " ++ data_fn_info.params.len ++ ", found " ++ interface_fn_info.params.len);
-
-        for (interface_fn_info.params, data_fn_info.params, 0..) |interface_param, data_param, i| {
-            if (i == 0) {
-                if (interface_param.type != *anyopaque) @compileError("First parameter of '" ++ field.name ++ "' field of vtable must be of type '*anyopaque', found " ++ @typeName(interface_param.type));
-                if (data_param.type != *T and data_param.type != *const T) @compileError("First parameter of function '" ++ &func_name ++ "' in " ++ @typeName(T) ++ " must be of type '*" ++ @typeName(T) ++ "', found " ++ @typeName(data_param.type.?));
-                continue;
-            }
-            if (interface_param.type != data_param.type) {
-                @compileError("Parameter type mismatch in function '" ++ &func_name ++ "': expected " ++ @typeName(data_param.type.?) ++ ", found " ++ @typeName(interface_param.type.?));
-            }
+inline fn checkContextField(comptime I: type) []const u8 {
+    const names = .{ "context", "ptr", "data", "userdata" };
+    for (names) |name| {
+        if (@hasField(I, name) and @FieldType(I, name) == *anyopaque) {
+            return name;
         }
+    }
+    @compileError(@typeName(I) ++ " must have a 'context', 'ptr', 'data' or 'userdata' field of type '*anyopaque'");
+}
+
+inline fn validateTableFunctions(comptime VTable: type, comptime T: type) void {
+    const fields = @typeInfo(VTable).@"struct".fields;
+    for (fields) |field| {
+        checkFunctions(VTable, T, field.name);
+    }
+}
+
+inline fn checkFunctions(comptime VTable: type, comptime T: type, comptime name: []const u8) void {
+    if (@typeInfo(@FieldType(VTable, name)) != .pointer or @typeInfo(@typeInfo(@FieldType(VTable, name)).pointer.child) != .@"fn") {
+        @compileError("'" ++ name ++ "' field of vtable must be a pointer to a function");
+    }
+
+    const func_name = comptime funcName(name);
+    if (!@hasDecl(T, &func_name)) {
+        @compileError(@typeName(T) ++ " does not have a declaration for '" ++ &func_name ++ "'");
+    }
+
+    const interface_fn_info = @typeInfo(@typeInfo(@FieldType(VTable, name)).pointer.child).@"fn";
+    const data_fn_info = @typeInfo(@TypeOf(@field(T, &func_name))).@"fn";
+    if (interface_fn_info.params.len != data_fn_info.params.len) {
+        @compileError("Function '" ++ &func_name ++ "' in " ++ @typeName(T) ++ " has a different number of parameters than the vtable function: expected " ++ data_fn_info.params.len ++ ", found " ++ interface_fn_info.params.len);
+    }
+
+    validateFunctions(interface_fn_info, data_fn_info, T, name);
+}
+
+inline fn validateFunctions(interface_fn: std.builtin.Type.Fn, data_fn: std.builtin.Type.Fn, comptime T: type, comptime name: []const u8) void {
+    if (interface_fn.params.len != data_fn.params.len) {
+        @compileError("Function parameter count mismatch: expected " ++ interface_fn.params.len ++ ", found " ++ data_fn.params.len);
+    }
+    for (interface_fn.params, data_fn.params, 0..) |interface_param, data_param, i| {
+        if (i == 0) {
+            if (interface_param.type != *anyopaque) @compileError("First parameter of '" ++ name ++ "' field of vtable must be of type '*anyopaque', found " ++ @typeName(interface_param.type));
+            if (@typeInfo(data_param.type.?) != .pointer) @compileError("First parameter of function '" ++ name ++ "' in " ++ @typeName(T) ++ " must be a pointer to " ++ @typeName(T) ++ ", found " ++ @typeName(data_param.type.?));
+            if (@typeInfo(data_param.type.?).pointer.child != T) {
+                @compileError("First parameter of function '" ++ name ++ "' in " ++ @typeName(T) ++ " must be a pointer to " ++ @typeName(T) ++ ", found " ++ @typeName(data_param.type.?));
+            }
+            continue;
+        }
+        if (interface_param.type != data_param.type) {
+            @compileError("Parameter type mismatch in function '" ++ name ++ "': expected " ++ @typeName(data_param.type.?) ++ ", found " ++ @typeName(interface_param.type.?));
+        }
+    }
+    if (interface_fn.return_type != data_fn.return_type) {
+        @compileError("Return type mismatch in function '" ++ name ++ "': expected " ++ @typeName(data_fn.return_type.?) ++ ", found " ++ @typeName(interface_fn.return_type.?));
     }
 }
 
@@ -105,7 +142,7 @@ test funcName {
 test "interface" {
     const Entity = struct {
         data: *anyopaque,
-        vtable: struct {
+        vtable: *const struct {
             health: *const fn (self: *anyopaque) u32,
             move: *const fn (self: *anyopaque, x: f32, y: f32) void,
         },
@@ -138,9 +175,15 @@ test "interface" {
     const entity = interfaceCast(Entity, &player);
 
     try testing.expectEqual(Entity, @TypeOf(entity));
+
+    try testing.expectEqual(entity.data, @as(*anyopaque, @ptrCast(&player)));
     try testing.expectEqual(entity.health(), 100);
 
     entity.move(5, 10);
     try testing.expectEqual(player.x, 5);
     try testing.expectEqual(player.y, 10);
+
+    entity.move(10, 5);
+    try testing.expectEqual(player.x, 15);
+    try testing.expectEqual(player.y, 15);
 }
