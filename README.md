@@ -1,12 +1,13 @@
 # interfaceCast
 
-A more Zig-like way of making interfaces.
+A Zig-ish way of handling interfaces.
 
 ## Example
 
 ```zig
 const std = @import("std");
 const interfaceCast = @import("interfaceCast").interfaceCast;
+const print = std.debug.print;
 
 pub const Entity = struct {
     data: *anyopaque,
@@ -43,37 +44,43 @@ pub fn main() void {
     var player = Player{ .current_health = 100, .x = 0, .y = 0 };
     const entity = interfaceCast(Entity, &player);
 
-    std.debug.print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 100%
+    print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 100%
     player.current_health -= 25;
-    std.debug.print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 75%
+    print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 75%
 
-    std.debug.print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (0, 0)
+    print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (0, 0)
     entity.move(10, 5);
-    std.debug.print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (10, 5)
+    print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (10, 5)
     entity.move(5, 10);
-    std.debug.print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (15, 15)
+    print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (15, 15)
 }
 ```
 
 ## Adding to a project
 
-Run the following command to add the library to your project.
+Run the following command to add the package to your project.
 
 ```bash
 zig fetch --save git+https://github.com/DanielKMach/interfaceCast#main
 ```
 
-Then import the module through your `build.zig`
+Then add it as an import in your `build.zig`
 
 ```zig
 const interface_cast = b.dependency("interfaceCast", .{
-    .target = b.standardTargetOptions(.{}),
-    .optimize = b.standardOptimizeOption(.{}),
+    .target = target,
+    .optimize = optimize,
 });
 
-your_exe.root_module.addImport("interfaceCast", interface_cast.module("interfaceCast"));
+your_exe_module.addImport("interfaceCast", interface_cast.module("interfaceCast"));
 ```
 
-## Collaborating
+Now you are ready to use it in your code.
+
+```zig
+const interfaceCast = @import("interfaceCast").interfaceCast;
+```
+
+## Contributing
 
 Feel free to open an issue or make a PR.

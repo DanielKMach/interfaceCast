@@ -1,5 +1,6 @@
 const std = @import("std");
 const interfaceCast = @import("interfaceCast").interfaceCast;
+const print = std.debug.print;
 
 pub const Entity = struct {
     data: *anyopaque,
@@ -36,13 +37,13 @@ pub fn main() void {
     var player = Player{ .current_health = 100, .x = 0, .y = 0 };
     const entity = interfaceCast(Entity, &player);
 
-    std.debug.print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 100%
+    print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 100%
     player.current_health -= 25;
-    std.debug.print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 75%
+    print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 75%
 
-    std.debug.print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (0, 0)
+    print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (0, 0)
     entity.move(10, 5);
-    std.debug.print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (10, 5)
+    print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (10, 5)
     entity.move(5, 10);
-    std.debug.print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (15, 15)
+    print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (15, 15)
 }
