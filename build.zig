@@ -39,7 +39,8 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{
         .root_module = module,
     });
-    test_lib.dependOn(&tests.step);
+    const run_tests = b.addRunArtifact(tests);
+    test_lib.dependOn(&run_tests.step);
 
     inline for (examples) |ex| {
         if (target_example == null or std.mem.eql(u8, target_example.?, ex.name)) {
