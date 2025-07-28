@@ -94,7 +94,16 @@ inline fn validateFunctions(interface_fn: std.builtin.Type.Fn, data_fn: std.buil
             @compileError("Parameter type mismatch in function '" ++ name ++ "': expected " ++ @typeName(data_param.type.?) ++ ", found " ++ @typeName(interface_param.type.?));
         }
     }
-    if (interface_fn.return_type != data_fn.return_type) {
+    if (interface_fn.return_type != null and @typeInfo(interface_fn.return_type.?) == .error_union and data_fn.return_type != null and @typeInfo(data_fn.return_type.?) == .error_union) {
+        const interface_union = @typeInfo(interface_fn.return_type.?).error_union;
+        const data_union = @typeInfo(data_fn.return_type.?).error_union;
+        if (!isSuperSetOf(interface_union.error_set, data_union.error_set)) {
+            @compileError("Return type error union mismatch in function '" ++ name ++ "': expected a superset of " ++ @typeName(data_union.error_set) ++ ", found " ++ @typeName(interface_union.error_set));
+        }
+        if (interface_union.payload != data_union.payload) {
+            @compileError("Return type error union payload mismatch in function '" ++ name ++ "': expected " ++ @typeName(data_union.payload) ++ ", found " ++ @typeName(interface_union.payload));
+        }
+    } else if (interface_fn.return_type != data_fn.return_type) {
         @compileError("Return type mismatch in function '" ++ name ++ "': expected " ++ @typeName(data_fn.return_type.?) ++ ", found " ++ @typeName(interface_fn.return_type.?));
     }
 }
@@ -137,6 +146,46 @@ test funcName {
         try testing.expectEqualSlices(u8, &result, expected);
         try testing.expectEqualSlices(u8, &comptime_result, expected);
     }
+}
+
+inline fn isSuperSetOf(comptime A: type, comptime B: type) bool {
+    std.debug.assert(@typeInfo(A) == .error_set);
+    std.debug.assert(@typeInfo(B) == .error_set);
+    const a_set = @typeInfo(A).error_set;
+    const b_set = @typeInfo(B).error_set;
+
+    if (a_set == null) return true;
+    if (b_set == null) return false;
+
+    m: for (b_set.?) |b| {
+        for (a_set.?) |a| {
+            if (std.mem.eql(u8, a.name, b.name)) continue :m;
+        }
+        return false;
+    }
+    return true;
+}
+
+test isSuperSetOf {
+    const A = error{ A, B, C };
+    const B = error{ B, C };
+    const C = error{C};
+
+    try testing.expect(isSuperSetOf(A, A));
+    try testing.expect(isSuperSetOf(A, B));
+    try testing.expect(isSuperSetOf(A, C));
+    try testing.expect(!isSuperSetOf(B, A));
+    try testing.expect(isSuperSetOf(B, B));
+    try testing.expect(isSuperSetOf(B, C));
+    try testing.expect(!isSuperSetOf(C, A));
+    try testing.expect(!isSuperSetOf(C, B));
+    try testing.expect(isSuperSetOf(C, C));
+    try testing.expect(!isSuperSetOf(A, anyerror));
+    try testing.expect(!isSuperSetOf(B, anyerror));
+    try testing.expect(!isSuperSetOf(C, anyerror));
+    try testing.expect(isSuperSetOf(anyerror, A));
+    try testing.expect(isSuperSetOf(anyerror, B));
+    try testing.expect(isSuperSetOf(anyerror, C));
 }
 
 test "interface" {
