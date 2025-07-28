@@ -14,7 +14,7 @@ pub inline fn interfaceCast(comptime I: type, ctx: anytype) I {
     @field(interface, "vtable") = &(comptime blk: {
         var table: VTable = undefined;
         for (@typeInfo(VTable).@"struct".fields) |f| {
-            @field(table, f.name) = @ptrCast(&@field(T, &funcName(f.name)));
+            @field(table, f.name) = @ptrCast(&@field(T, f.name));
         }
         break :blk table;
     });
@@ -63,15 +63,14 @@ inline fn checkFunctions(comptime VTable: type, comptime T: type, comptime name:
         @compileError("'" ++ name ++ "' field of vtable must be a pointer to a function");
     }
 
-    const func_name = comptime funcName(name);
-    if (!@hasDecl(T, &func_name)) {
-        @compileError(@typeName(T) ++ " does not have a declaration for '" ++ &func_name ++ "'");
+    if (!@hasDecl(T, name)) {
+        @compileError(@typeName(T) ++ " does not have a declaration for '" ++ name ++ "'");
     }
 
     const interface_fn_info = @typeInfo(@typeInfo(@FieldType(VTable, name)).pointer.child).@"fn";
-    const data_fn_info = @typeInfo(@TypeOf(@field(T, &func_name))).@"fn";
+    const data_fn_info = @typeInfo(@TypeOf(@field(T, name))).@"fn";
     if (interface_fn_info.params.len != data_fn_info.params.len) {
-        @compileError("Function '" ++ &func_name ++ "' in " ++ @typeName(T) ++ " has a different number of parameters than the vtable function: expected " ++ data_fn_info.params.len ++ ", found " ++ interface_fn_info.params.len);
+        @compileError("Function '" ++ name ++ "' in " ++ @typeName(T) ++ " has a different number of parameters than the vtable function: expected " ++ data_fn_info.params.len ++ ", found " ++ interface_fn_info.params.len);
     }
 
     validateFunctions(interface_fn_info, data_fn_info, T, name);
@@ -105,46 +104,6 @@ inline fn validateFunctions(interface_fn: std.builtin.Type.Fn, data_fn: std.buil
         }
     } else if (interface_fn.return_type != data_fn.return_type) {
         @compileError("Return type mismatch in function '" ++ name ++ "': expected " ++ @typeName(data_fn.return_type.?) ++ ", found " ++ @typeName(interface_fn.return_type.?));
-    }
-}
-
-fn funcName(comptime field: []const u8) [funcNameCount(field)]u8 {
-    var new_name: [funcNameCount(field)]u8 = undefined;
-    var off: usize = 0;
-    for (0..new_name.len) |i| {
-        if (field[i + off] == '_') {
-            off += 1;
-            new_name[i] = std.ascii.toUpper(field[i + off]);
-        } else {
-            new_name[i] = field[i + off];
-        }
-    }
-    return new_name;
-}
-
-inline fn funcNameCount(comptime field: []const u8) usize {
-    return field.len - std.mem.count(u8, field, "_");
-}
-
-test funcName {
-    const test_cases = [_][]const u8{
-        "test_function",
-        "another_test_function",
-        "simpleFunction",
-        "functionWithNoUnderscores",
-    };
-    const expected_results = [_][]const u8{
-        "testFunction",
-        "anotherTestFunction",
-        "simpleFunction",
-        "functionWithNoUnderscores",
-    };
-
-    inline for (test_cases, expected_results) |test_case, expected| {
-        const result = funcName(test_case);
-        const comptime_result = comptime funcName(test_case);
-        try testing.expectEqualSlices(u8, &result, expected);
-        try testing.expectEqualSlices(u8, &comptime_result, expected);
     }
 }
 
