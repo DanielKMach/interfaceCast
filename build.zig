@@ -7,6 +7,10 @@ const examples = .{
         .args = &.{ "hello", "world" },
     },
     .{
+        .name = "list",
+        .path = "examples/list.zig",
+    },
+    .{
         .name = "player",
         .path = "examples/player.zig",
     },

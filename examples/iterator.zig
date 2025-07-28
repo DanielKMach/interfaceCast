@@ -2,7 +2,7 @@ const std = @import("std");
 const interfaceCast = @import("interfaceCast").interfaceCast;
 const print = std.debug.print;
 
-pub fn Iterator(comptime T: type) type {
+pub fn AnyIterator(comptime T: type) type {
     return struct {
         data: *anyopaque,
         vtable: *const struct {
@@ -15,17 +15,17 @@ pub fn Iterator(comptime T: type) type {
     };
 }
 
-const StringIterator = Iterator([:0]const u8);
+const AnyStringIterator = AnyIterator([:0]const u8);
 
 pub fn main() !void {
     var args = try std.process.argsWithAllocator(std.heap.page_allocator);
     defer args.deinit();
 
-    const iterator = interfaceCast(StringIterator, &args);
+    const iterator = interfaceCast(AnyStringIterator, &args);
     printAll(iterator);
 }
 
-pub fn printAll(iterator: StringIterator) void {
+pub fn printAll(iterator: AnyStringIterator) void {
     while (iterator.next()) |item| {
         print("next() -> \"{s}\"\r\n", .{item});
     }
