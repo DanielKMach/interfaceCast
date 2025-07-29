@@ -2,7 +2,17 @@
 
 A Zig-ish way of handling interfaces.
 
-## Example
+### Features
+
+- [x] `interfaceCast` allows you to cast any struct into an interface.
+- [x] Friendly with predefined interfaces (like the ones from std) as long as they have both a `vtable` and `context` fields.
+    - The `context` (`ptr`, `data` and `userdata` also works) field must be of type `*anyopaque`.
+    - The `vtable` field must be a pointer to a constant struct and must only contain contant pointers to functions.
+- [x] Automatic casting of `*anyopaque` into its context type.
+- [x] Automatic error coercion if the interface's function returns an error superset of its context's function return type (see `examples/list.zig`).
+- [x] Since interfaces are just structs, `interfaceCast` also supports generic interfaces (check `examples/iterator.zig` and `examples/list.zig`).
+
+### Example
 
 ```zig
 const std = @import("std");
