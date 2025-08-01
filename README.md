@@ -5,12 +5,13 @@ A Zig-ish way of handling interfaces.
 ### Features
 
 - [x] `interfaceCast` allows you to cast any struct into an interface.
-- [x] Friendly with predefined interfaces (like the ones from std) as long as they have both a `vtable` and `context` fields.
+    - Interfaces are just structs that have both a `vtable` and a `context` field.
     - The `context` (`ptr`, `data` and `userdata` also works) field must be of type `*anyopaque`.
-    - The `vtable` field must be a pointer to a constant struct and must only contain contant pointers to functions.
-- [x] Automatic casting of `*anyopaque` into its context type.
-- [x] Automatic error coercion if the interface's function returns an error superset of its context's function return type (see `examples/list.zig`).
-- [x] Since interfaces are just structs, `interfaceCast` also supports generic interfaces (check `examples/iterator.zig` and `examples/list.zig`).
+    - The `vtable` field must be a constant pointer to a struct and each field of that struct must be a constant pointer to a function.
+- [x] Automatic casting of `*anyopaque` into the interface's context type.
+- [x] Automatic error coercion if the interface returns an error superset of its context type's (see example below).
+- [x] Allows for generic interfaces (see example below).
+- [x] Friendly with predefined interfaces (like the ones from std).
 
 ### Example
 
@@ -18,51 +19,95 @@ A Zig-ish way of handling interfaces.
 const std = @import("std");
 const interfaceCast = @import("interfaceCast").interfaceCast;
 const print = std.debug.print;
+const assert = std.debug.assert;
 
-pub const Entity = struct {
-    data: *anyopaque,
-    vtable: *const struct {
-        health: *const fn (self: *anyopaque) u32,
-        move: *const fn (self: *anyopaque, x: f32, y: f32) void,
-    },
+/// This is an interface that can be used to represent a list
+/// that can append and pop elements of type `T`.
+pub fn AnyList(comptime T: type) type {
 
-    pub fn health(self: Entity) u32 {
-        return self.vtable.health(self.data);
+    // Interfaces are just structs with `context` and `vtable` fields.
+    return struct {
+
+        // This is the context field, which must of type `*anyopaque`.
+        context: *anyopaque,
+
+        // This is the vtable field, which must be a constant pointer to a struct.
+        //
+        // Each field in the vtable must be a constant pointer to a function
+        //
+        // The name of each field is significant, as it directly maps to the context type's function names.
+        // Since we want this interface to append and pop elements, we define the vtable with `append` and `pop` fields.
+        // The function signatures must match the context type's function signatures.
+        vtable: *const struct {
+            append: *const fn (self: *anyopaque, value: T) error{ OutOfMemory, Overflow }!void,
+            pop: *const fn (self: *anyopaque) ?T,
+        },
+
+        // Notice how the following function return type is an error union with `OutOfMemory` and `Overflow`.
+        // This is the case because `ArrayList` might return `error.OutOfMemory` when appending an element,
+        // and `BoundedArray` might return `error.Overflow` when trying to append an element
+        // that exceeds its defined capacity.
+        //
+        // So to allow both `ArrayList` and `BoundedArray` to be cast to this interface,
+        // we need to define the return type to be an error union that is a superset
+        // of both `ArrayList` and `BoundedArray` error sets.
+        //
+        // This is possible because `interfaceCast` automatically detects that the return
+        // type is a superset of the context type's.
+        pub fn append(self: @This(), value: T) error{ OutOfMemory, Overflow }!void {
+            // Here we call the function from the vtable.
+            try self.vtable.append(self.context, value);
+        }
+
+        // Interfaces can also return values.
+        pub fn pop(self: @This()) ?T {
+            // Here we also call the function from the vtable.
+            return self.vtable.pop(self.context);
+        }
+    };
+}
+
+/// Appends numbers from 0 to `count - 1` to the provided list.
+pub fn appendNumbers(list: AnyList(usize), count: usize) anyerror!void {
+    for (0..count) |i| {
+        try list.append(i);
     }
+}
 
-    pub fn move(self: Entity, x: f32, y: f32) void {
-        self.vtable.move(self.data, x, y);
+/// Pops all elements from the list and prints them.
+pub fn popAll(list: AnyList(usize)) void {
+    while (list.pop()) |item| {
+        print("{d} ", .{item});
     }
-};
+    print("\r\n", .{});
+}
 
-pub const Player = struct {
-    current_health: u32,
-    x: f32,
-    y: f32,
+pub fn main() !void {
+    // Lets try casting an `ArrayList` to the `AnyList` interface.
+    var arraylist = std.ArrayList(usize).init(std.heap.page_allocator);
+    defer arraylist.deinit();
 
-    pub fn health(self: *const Player) u32 {
-        return self.current_health;
-    }
+    const any_list = interfaceCast(AnyList(usize), &arraylist);
+    try appendNumbers(any_list, 5);
+    assert(arraylist.items.len == 5);
+    // Notice how we fed `any_list` to `appendNumbers`, and `arraylist` gets updated.
 
-    pub fn move(self: *Player, x: f32, y: f32) void {
-        self.x += x;
-        self.y += y;
-    }
-};
+    popAll(any_list); // Prints: 4 3 2 1 0
+    assert(arraylist.items.len == 0);
 
-pub fn main() void {
-    var player = Player{ .current_health = 100, .x = 0, .y = 0 };
-    const entity = interfaceCast(Entity, &player);
+    // Lets try the same thing, but now with a `BoundedArray`.
+    var bounded_array = std.BoundedArray(usize, 3){};
 
-    print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 100%
-    player.current_health -= 25;
-    print("Player health: {d}%\r\n", .{entity.health()}); // Player health: 75%
+    const any_list2 = interfaceCast(AnyList(usize), &bounded_array);
+    try appendNumbers(any_list2, 3);
+    assert(bounded_array.len == 3);
+    // Just like the last time, when we append to `any_list2`, `bounded_array` gets updated.
 
-    print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (0, 0)
-    entity.move(10, 5);
-    print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (10, 5)
-    entity.move(5, 10);
-    print("Player is at ({d}, {d})\r\n", .{ player.x, player.y }); // Player is at (15, 15)
+    assert(any_list2.append(3) == error.Overflow);
+    // Interfaces can also return errors.
+
+    popAll(any_list2); // Prints: 2 1 0
+    assert(bounded_array.len == 0);
 }
 ```
 
