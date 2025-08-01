@@ -41,10 +41,22 @@ pub fn build(b: *std.Build) void {
     install.dependOn(&install_lib.step);
 
     const tests = b.addTest(.{
+        .name = "interfaceCast",
         .root_module = module,
     });
+    const example_tests = b.addTest(.{
+        .name = "examples",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/examples.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    example_tests.root_module.addImport("interfaceCast", module);
     const run_tests = b.addRunArtifact(tests);
+    const run_example_tests = b.addRunArtifact(example_tests);
     test_lib.dependOn(&run_tests.step);
+    test_lib.dependOn(&run_example_tests.step);
 
     inline for (examples) |ex| {
         if (target_example == null or std.mem.eql(u8, target_example.?, ex.name)) {

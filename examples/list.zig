@@ -1,46 +1,122 @@
 const std = @import("std");
 const interfaceCast = @import("interfaceCast").interfaceCast;
 const print = std.debug.print;
+const assert = std.debug.assert;
+const testing = std.testing;
 
+/// This is an interface that can be used to represent a list
+/// that can append and pop elements of type `T`.
 pub fn AnyList(comptime T: type) type {
+
+    // Interfaces are just structs with `context` and `vtable` fields.
     return struct {
-        data: *anyopaque,
+
+        // This is the context field, which must of type `*anyopaque`.
+        context: *anyopaque,
+
+        // This is the vtable field, which must be a constant pointer to a struct.
+        //
+        // Each field in the vtable must be a constant pointer to a function
+        //
+        // The name of each field is significant, as it directly maps to the context type's function names.
+        // Since we want this interface to append and pop elements, we define the vtable with `append` and `pop` fields.
+        // The function signatures must match the context type's function signatures.
         vtable: *const struct {
             append: *const fn (self: *anyopaque, value: T) error{ OutOfMemory, Overflow }!void,
+            pop: *const fn (self: *anyopaque) ?T,
         },
 
+        // Notice how the following function return type is an error union with `OutOfMemory` and `Overflow`.
+        // This is the case because `ArrayList` might return `error.OutOfMemory` when appending an element,
+        // and `BoundedArray` might return `error.Overflow` when trying to append an element
+        // that exceeds its defined capacity.
+        //
+        // So to allow both `ArrayList` and `BoundedArray` to be cast to this interface,
+        // we need to define the return type to be an error union that is a superset
+        // of both `ArrayList` and `BoundedArray` error sets.
+        //
+        // This is possible because `interfaceCast` automatically detects that the return
+        // type is a superset of the context type's.
         pub fn append(self: @This(), value: T) error{ OutOfMemory, Overflow }!void {
-            return self.vtable.append(self.data, value);
+            // Here we call the function from the vtable.
+            try self.vtable.append(self.context, value);
+        }
+
+        // Interfaces can also return values.
+        pub fn pop(self: @This()) ?T {
+            // Here we also call the function from the vtable.
+            return self.vtable.pop(self.context);
         }
     };
 }
 
-pub fn main() !void {
-    var array = std.ArrayList(usize).init(std.heap.page_allocator);
-    defer array.deinit();
-
-    var bounded = std.BoundedArray(usize, 3){};
-
-    var any_list = interfaceCast(AnyList(usize), &array);
-    try appendNumbers(any_list, 5);
-
-    any_list = interfaceCast(AnyList(usize), &bounded);
-    try appendNumbers(any_list, 3);
-
-    print("Numbers (ArrayList): ", .{});
-    for (array.items) |item| {
-        print("{d} ", .{item});
+/// Appends numbers from 0 to `count - 1` to the provided list.
+pub fn appendNumbers(list: AnyList(usize), count: usize) anyerror!void {
+    for (0..count) |i| {
+        try list.append(i);
     }
-    print("\r\n", .{});
-    print("Numbers (BoundedArray): ", .{});
-    for (bounded.slice()) |item| {
+}
+
+/// Pops all elements from the list and prints them.
+pub fn popAll(list: AnyList(usize)) void {
+    while (list.pop()) |item| {
         print("{d} ", .{item});
     }
     print("\r\n", .{});
 }
 
-pub fn appendNumbers(list: AnyList(usize), count: usize) anyerror!void {
-    for (0..count) |i| {
-        try list.append(i);
+pub fn main() !void {
+    // Lets try casting an `ArrayList` to the `AnyList` interface.
+    var arraylist = std.ArrayList(usize).init(std.heap.page_allocator);
+    defer arraylist.deinit();
+
+    const any_list = interfaceCast(AnyList(usize), &arraylist);
+    try appendNumbers(any_list, 5);
+    assert(arraylist.items.len == 5);
+    // Notice how we fed `any_list` to `appendNumbers`, and `arraylist` gets updated.
+
+    popAll(any_list); // Prints: 4 3 2 1 0
+    assert(arraylist.items.len == 0);
+
+    // Lets try the same thing, but now with a `BoundedArray`.
+    var bounded_array = std.BoundedArray(usize, 3){};
+
+    const any_list2 = interfaceCast(AnyList(usize), &bounded_array);
+    try appendNumbers(any_list2, 3);
+    assert(bounded_array.len == 3);
+    // Just like the last time, when we append to `any_list2`, `bounded_array` gets updated.
+
+    assert(any_list2.append(3) == error.Overflow);
+    // Interfaces can also return errors.
+
+    popAll(any_list2); // Prints: 2 1 0
+    assert(bounded_array.len == 0);
+}
+
+test "list" {
+    const expected = &.{ 0, 1, 2, 3, 4 };
+
+    // Array list
+    var array = std.ArrayList(usize).init(std.heap.page_allocator);
+    defer array.deinit();
+    var any_list = interfaceCast(AnyList(usize), &array);
+    try appendNumbers(any_list, 5);
+
+    const array_items = array.items;
+    try testing.expectEqual(array_items.len, 5);
+    inline for (0..5) |i| {
+        try testing.expectEqual(expected[i], array_items[i]);
+    }
+
+    // Bounded array
+    var bounded = std.BoundedArray(usize, 5){};
+    any_list = interfaceCast(AnyList(usize), &bounded);
+    try appendNumbers(any_list, 5);
+    try testing.expectError(error.Overflow, any_list.append(5)); // Should fail due to being a bounded array
+
+    const bounded_items = bounded.slice();
+    try testing.expectEqual(bounded_items.len, 5);
+    inline for (0..5) |i| {
+        try testing.expectEqual(expected[i], bounded_items[i]);
     }
 }
